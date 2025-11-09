@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from langchain.tools import tool
+from langchain_core.tools import tool
 from langchain_core.language_models import BaseLanguageModel
 from langchain.chat_models import init_chat_model
 import os
@@ -7,28 +7,30 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 延迟初始化语言模型，避免在导入时访问 streamlit session_state
+# 延迟初始化语言模型
 llm = None
+_current_model_name = None
 
 def get_llm(model_name: str = "qwen-plus"):
-    """获取或初始化语言模型"""
-    global llm
-    # 每次都尝试获取最新的模型名称，支持动态切换模型
-    try:
-        import streamlit as st
-        current_model = st.session_state.get("model", model_name)
-    except:
-        # 如果没有 streamlit 上下文，使用传入的默认值
-        current_model = model_name
+    """
+    获取或初始化语言模型
+    
+    注意：此函数不再依赖 Streamlit session_state，因为现在主要使用 FastAPI 后端。
+    模型名称应该通过 agent.py 中的 LLM 配置传递，工具内部使用默认模型。
+    """
+    global llm, _current_model_name
+    
+    # 使用传入的模型名称（不再尝试从 Streamlit 获取）
+    current_model = model_name
     
     # 如果模型名称改变或 llm 未初始化，重新创建
-    if llm is None or (hasattr(llm, '_model_name') and llm._model_name != current_model):
+    if llm is None or _current_model_name != current_model:
         llm = init_chat_model(
             model=current_model, 
             model_provider="openai", 
             base_url=os.getenv("OPENAI_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         )
-        llm._model_name = current_model  # 保存当前模型名称
+        _current_model_name = current_model  # 保存当前模型名称
     return llm
 
 @tool(

@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from typing import Annotated, Sequence, Optional
 import os
+import warnings
 
-from langchain.callbacks.base import BaseCallbackHandler
+from langchain_core.callbacks.base import BaseCallbackHandler
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
@@ -26,6 +27,13 @@ from dotenv import load_dotenv
 # 加载 .env 文件，但不覆盖已存在的系统环境变量
 load_dotenv(override=False)
 
+# 抑制 Streamlit 在非 Streamlit 环境中的警告
+# 这些警告在 FastAPI 后端环境中是正常的，可以安全忽略
+warnings.filterwarnings("ignore", category=UserWarning, module="streamlit")
+warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
+warnings.filterwarnings("ignore", message=".*Session state does not function.*")
+os.environ["STREAMLIT_SERVER_RUNNING"] = "false"
+
 @dataclass
 class MessagesState:
     messages: Annotated[Sequence[BaseMessage], add_messages]
@@ -33,12 +41,19 @@ class MessagesState:
 memory = MemorySaver()
 
 # Set up MCP client
+import os
+from pathlib import Path
+
+# 获取项目根目录
+project_root = Path(__file__).resolve().parent
+mcp_time_path = project_root / "tools" / "mcp_time.py"
+
 client = MultiServerMCPClient(
     {
         "time": {
             "command": "python",
-            # Make sure to update to the full absolute path to your file
-            "args": ["./tools/mcp_time.py"],
+            # 使用绝对路径
+            "args": [str(mcp_time_path)],
             "transport": "stdio",
         },
         # 注释掉失效的 fetch 服务
@@ -115,9 +130,14 @@ sys_msg = SystemMessage(
     - database_schema_rag: This tool allows you to search for database schema details when needed to generate the SQL code.
     - text2sqlite_query: This tool allows you to convert natural language text to a SQLite query.
     - execute_sqlite_query: This tool allows you to execute a SQLite query on a fixed database and return the results as JSON. Use this tool to interact with the SQLite database.
-    - high_charts_json: This tool allows you to generate Highcharts JSON config from a list of numbers and chart type.
+    - high_charts_json: This tool allows you to generate Highcharts JSON config from a list of numbers and chart type. IMPORTANT: When the user asks to draw a chart, graph, or visualization (like "画图", "画出", "图表", "可视化"), you MUST:
+      1. First execute a SQL query to get the data
+      2. Extract the numeric data from the query results
+      3. Call high_charts_json tool with the numbers and appropriate chart type (like "area", "line", "column", "bar", "spline")
+      4. Include the chart configuration in your final answer
 
     Your final answer should contain the analysis results or visualizations based on the user's question and the data retrieved from the database.
+    When the user requests a chart, you MUST generate and include the chart configuration using the high_charts_json tool.
     You should try to add some insights based on the data.
     """
 )
