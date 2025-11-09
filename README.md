@@ -76,9 +76,28 @@ ChatBI (Chat Business Intelligence) 是一个基于 LangGraph 的智能数据对
    cd ChatBI
    ```
 
-2. 安装依赖（建议使用虚拟环境）：
+2. 安装依赖（选择以下方式之一）：
+
+   **方式 A：使用 Conda（推荐）**
+   ```bash
+   # 如果 nlp 环境已存在，更新它
+   conda activate nlp
+   conda env update -n nlp -f environment.yml --prune
+   
+   # 如果 nlp 环境不存在，创建新环境
+   conda env create -n nlp -f environment.yml
+   conda activate nlp
+   ```
+   详细说明请参考 [CONDA_SETUP.md](CONDA_SETUP.md)
+
+   **方式 B：使用 uv**
    ```bash
    uv sync
+   ```
+
+   **方式 C：使用 pip**
+   ```bash
+   pip install -r requirements.txt
    ```
 
 3. 添加 API_KEY

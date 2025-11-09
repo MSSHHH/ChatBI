@@ -1,6 +1,6 @@
-import streamlit as st
 from dataclasses import dataclass
 from typing import Annotated, Sequence, Optional
+import os
 
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain_core.messages import SystemMessage
@@ -23,7 +23,8 @@ from PIL import Image
 from io import BytesIO
 
 from dotenv import load_dotenv
-load_dotenv()
+# 加载 .env 文件，但不覆盖已存在的系统环境变量
+load_dotenv(override=False)
 
 @dataclass
 class MessagesState:
@@ -40,52 +41,70 @@ client = MultiServerMCPClient(
             "args": ["./tools/mcp_time.py"],
             "transport": "stdio",
         },
-        "fetch": {
-            "transport": "streamable_http",
-            "url": "https://mcp.api-inference.modelscope.net/12c7b43a064846/mcp"
-    }
-        # "time": {
-        #     # make sure you start your weather server on port 1234
-        #     "url": "https://:1234/mcp/",
+        # 注释掉失效的 fetch 服务
+        # "fetch": {
         #     "transport": "streamable_http",
-        # },
-        # "weather": {
-        #     # make sure you start your weather server on port 8000
-        #     "url": "https://:8000/mcp/",
-        #     "transport": "streamable_http",
+        #     "url": "https://mcp.api-inference.modelscope.net/12c7b43a064846/mcp"
         # }
     }
 )
 # 异步方式
 async def get_mcp_tools():
-    mcp_tools = await client.get_tools()
-    return mcp_tools
+    try:
+        mcp_tools = await client.get_tools()
+        return mcp_tools
+    except Exception as e:
+        print(f"Warning: Failed to load MCP tools: {e}")
+        return []
 
 
-mcp_tools = asyncio.run(client.get_tools())
-# st.write(f"mcp_tools: {mcp_tools}")
+# 安全地加载 MCP 工具，失败时不阻塞启动
+try:
+    mcp_tools = asyncio.run(get_mcp_tools())
+except Exception as e:
+    print(f"Warning: Failed to initialize MCP tools: {e}")
+    mcp_tools = []
 
 tools = [retriever_tool, search, text2sqlite_tool, highcharts_tool, execute_sqlite_query]
 tools = tools + mcp_tools
+
 @dataclass
 class ModelConfig:
     model_name: str
     api_key: str
     base_url: Optional[str] = None
 
-model_configurations = {
-    "qwen-plus": ModelConfig(
-        model_name="qwen-plus", api_key=st.secrets["OPENAI_API_KEY"],
-        base_url=st.secrets["OPENAI_API_BASE_URL"] if "OPENAI_API_BASE_URL" in st.secrets else None
-    ),
-    "qwen-turbo": ModelConfig(
-        model_name="qwen-turbo", api_key=st.secrets["OPENAI_API_KEY"],
-        base_url=st.secrets["OPENAI_API_BASE_URL"] if "OPENAI_API_BASE_URL" in st.secrets else None
-    ),
-    "qwen3-max-preview": ModelConfig(
-        model_name="qwen3-max-preview", api_key=st.secrets["OPENAI_API_KEY"],
-        base_url=st.secrets["OPENAI_API_BASE_URL"] if "OPENAI_API_BASE_URL" in st.secrets else None
-    )
+def get_env_var(var_name: str, default: Optional[str] = None) -> Optional[str]:
+    """
+    从系统环境变量或 .env 文件获取环境变量
+    优先使用系统环境变量（如果已设置）
+    """
+    # os.getenv() 会先从系统环境变量读取，如果没有再从 .env 文件读取（如果 load_dotenv 已调用）
+    value = os.getenv(var_name, default)
+    return value
+
+# 模型配置 - 使用函数动态获取环境变量，而不是在模块加载时
+def get_model_configurations():
+    """动态获取模型配置，确保每次调用时都读取最新的环境变量"""
+    api_key = get_env_var("OPENAI_API_KEY")
+    base_url = get_env_var("OPENAI_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    
+    return {
+        "qwen-plus": ModelConfig(
+            model_name="qwen-plus", 
+            api_key=api_key,
+            base_url=base_url
+        ),
+        "qwen-turbo": ModelConfig(
+            model_name="qwen-turbo", 
+            api_key=api_key,
+            base_url=base_url
+        ),
+        "qwen3-max-preview": ModelConfig(
+            model_name="qwen3-max-preview", 
+            api_key=api_key,
+            base_url=base_url
+        )
     }
 
 sys_msg = SystemMessage(
@@ -105,12 +124,23 @@ sys_msg = SystemMessage(
 
 
 def create_agent(callback_handler: BaseCallbackHandler, model_name: str) -> StateGraph:
+    # 动态获取模型配置，确保读取最新的环境变量
+    model_configurations = get_model_configurations()
     config = model_configurations.get(model_name)
     if not config:
         raise ValueError(f"Unsupported model name: {model_name}")
 
     if not config.api_key:
-        raise ValueError(f"API key for model '{model_name}' is not set. Please check your environment variables or secrets configuration.")
+        # 提供更详细的错误信息
+        env_key = os.getenv("OPENAI_API_KEY")
+        if env_key:
+            raise ValueError(f"API key for model '{model_name}' is empty. Please check your environment variable OPENAI_API_KEY.")
+        else:
+            raise ValueError(
+                f"API key for model '{model_name}' is not set. "
+                f"Please set the OPENAI_API_KEY environment variable. "
+                f"You can set it in your system environment or create a .env file in the project root."
+            )
 
     llm = ChatOpenAI(
         model=config.model_name,
