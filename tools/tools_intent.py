@@ -1,13 +1,40 @@
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langchain.chat_models import init_chat_model
 import os
 from dotenv import load_dotenv
+from contextvars import ContextVar
 
 load_dotenv()
 
 _intent_llm = None
 _intent_model_name: Optional[str] = None
+_intent_context: ContextVar[Dict[str, Any]] = ContextVar("_intent_context", default={})
+
+
+def set_intent_context(
+	session_id: str,
+	last_sql: Optional[str] = None,
+	last_result_schema: Optional[List[str]] = None,
+) -> None:
+	"""
+	设置当前请求的默认上下文，供 analyze_nl_intent 自动复用。
+	"""
+	payload: Dict[str, Any] = {
+		"session_id": session_id,
+		"last_sql": last_sql or "",
+		"last_result_schema": last_result_schema or [],
+	}
+	_intent_context.set(payload)
+
+
+def clear_intent_context() -> None:
+	"""清空上下文，避免串话。"""
+	_intent_context.set({})
+
+
+def _get_intent_context() -> Dict[str, Any]:
+	return _intent_context.get({})
 
 
 def _get_llm(model_name: str = "qwen-plus"):
@@ -82,6 +109,13 @@ def analyze_nl_intent(text: str, last_sql: str = "", last_result_schema: str = "
 	返回:
 		结构化的意图计划(JSON对象)
 	"""
+	if not last_sql or not last_result_schema:
+		context = _get_intent_context()
+		if not last_sql:
+			last_sql = context.get("last_sql", "")
+		if not last_result_schema:
+			last_result_schema = context.get("last_result_schema", [])
+
 	prompt = _build_intent_prompt(text, last_sql, last_result_schema)
 	llm = _get_llm(model_name)
 	resp = llm.invoke(prompt)

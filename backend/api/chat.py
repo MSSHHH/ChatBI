@@ -16,10 +16,17 @@ except ImportError:
     import asyncio
 
 from agent import MessagesState, create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from backend.api.callback import StreamingCallbackHandler
+from backend.services.conversation_memory import (
+    ConversationMemoryStore,
+    build_memory_context_text,
+    extract_last_sql_and_schema,
+)
+from tools.tools_intent import clear_intent_context, set_intent_context
 
 router = APIRouter()
+conversation_memory = ConversationMemoryStore(max_turns_per_session=15)
 
 
 class ChatRequest(BaseModel):
@@ -63,13 +70,51 @@ async def stream_agent_response(query: str, session_id: str, request_id: str, mo
             print(f"[DEBUG] Received token: {repr(token[:50])}")
             token_queue.put(token)
         
-        callback_handler = StreamingCallbackHandler(token_callback=on_token)
+        callback_handler = StreamingCallbackHandler(
+            token_callback=on_token,
+            memory_store=conversation_memory,
+            session_id=session_id,
+        )
         
         # 创建 Agent
         react_graph = create_agent(callback_handler, model)
         
         # 创建消息状态
-        messages = [HumanMessage(content=query)]
+        memory_context_prompt = build_memory_context_text(
+            conversation_memory,
+            session_id=session_id,
+            limit=3,
+        )
+        context_messages = []
+        last_sql = None
+        last_schema = None
+        if memory_context_prompt:
+            last_sql, last_schema = extract_last_sql_and_schema(
+                conversation_memory,
+                session_id=session_id,
+            )
+            supplemental_lines = []
+            if last_sql:
+                supplemental_lines.append(f"上一轮 SQL: {last_sql}")
+            if last_schema:
+                supplemental_lines.append(f"上一轮结果列: {', '.join(last_schema)}")
+            supplemental_section = "\n".join(supplemental_lines)
+            context_text = (
+                "以下是与当前会话相关的历史对话摘要，请在本轮推理时复用上下文并保持口径一致：\n"
+                f"{memory_context_prompt}"
+            )
+            if supplemental_section:
+                context_text = f"{context_text}\n{supplemental_section}"
+            context_messages.append(SystemMessage(content=context_text))
+
+        # 为意图解析工具注入默认上下文
+        set_intent_context(
+            session_id=session_id,
+            last_sql=last_sql,
+            last_result_schema=last_schema,
+        )
+
+        messages = context_messages + [HumanMessage(content=query)]
         state = MessagesState(messages=messages)
         
         # 配置
@@ -208,6 +253,20 @@ async def stream_agent_response(query: str, session_id: str, request_id: str, mo
                             final_message = "处理完成，但未收到响应内容。"
                             print(f"[WARNING] No message content found!")
                         
+                        # 发送最终消息前，将本轮数据写入会话记忆
+                        try:
+                            tracked = callback_handler.consume_tracked_data()
+                            conversation_memory.commit_turn(
+                                session_id=session_id,
+                                user_query=query,
+                                assistant_response=final_message,
+                                intent_payload=tracked.get("intent_payload"),
+                                generated_sql=tracked.get("generated_sql"),
+                                execution_result=tracked.get("execution_payload"),
+                            )
+                        except Exception as commit_error:
+                            print(f"[WARNING] Failed to commit memory: {commit_error}")
+
                         # 发送最终消息
                         yield {
                             "event": "message",
@@ -239,6 +298,8 @@ async def stream_agent_response(query: str, session_id: str, request_id: str, mo
                 "finished": True
             }, ensure_ascii=False)
         }
+    finally:
+        clear_intent_context()
 
 
 @router.post("/query")
