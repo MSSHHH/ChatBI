@@ -42,9 +42,18 @@ const DataDialogue: FC<Props> = (props) => {
           </div>
         ) : null}
         {chat.chartData && <div className="font-bold text-[16px] mt-[18px] mb-[-10px]">输出结果</div>}
-        {chat.chartData?.map((n: Record<string, any> | undefined, index: number) => {
-          return <DataChat key={index} data={n} />;
-        })}
+        {(() => {
+          // 确保 chartData 是数组格式
+          const chartDataArray = Array.isArray(chat.chartData) 
+            ? chat.chartData 
+            : chat.chartData 
+              ? [chat.chartData] 
+              : [];
+          
+          return chartDataArray.map((n: Record<string, any> | undefined, index: number) => {
+            return <DataChat key={index} data={n} />;
+          });
+        })()}
         {chat.error?.length > 0 && (
           <div className="leading-[22px] text-[#1b1b1b] mt-[20px]">
             <span className="font-medium">回答失败，没能理解您的意图。</span>

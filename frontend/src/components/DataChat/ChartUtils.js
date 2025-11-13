@@ -226,6 +226,17 @@ const defaultConfig = {
       top: 0,
       show: false,
     },
+    toolbox: {
+      show: true,
+      right: 10,
+      feature: {
+        saveAsImage: {
+          type: 'png',
+          pixelRatio: 2,
+          name: 'chart',
+        },
+      },
+    },
   },
   dataFormat: '{"type":"number","digits":2,"numberLevel":0,"minus":"default","thousandflag":true,"numberLevelType":0,"numberLevels":[],"fillZero":false}|((Math.round(v*100)/100/1).toFixed(2)+\'\').replace(/\\B(?=(\\d{3})+(?!\\d))/g, \',\').replace(/(?<=\\.\\d*),/g, \'\')'
 };

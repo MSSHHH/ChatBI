@@ -33,7 +33,7 @@ export default (config: SSEConfig, url: string = DEFAULT_SSE_URL): void => {
 
   fetchEventSource(url, {
     method: 'POST',
-    credentials: 'include',
+    credentials: 'omit',
     headers: SSE_HEADERS,
     body: JSON.stringify(body),
     openWhenHidden: true,

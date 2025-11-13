@@ -5,6 +5,135 @@ import ChatsUtils from "./ChartUtils";
 import classNames from "classnames";
 import { useState, useMemo } from "react";
 
+type ChartConfig = Record<string, any>;
+
+const normalizeHighchartsConfig = (config: ChartConfig): ChartConfig => {
+  if (!config || typeof config !== "object") {
+    return {};
+  }
+
+  const hasCustomFormat = Array.isArray(config.dimCols) && Array.isArray(config.measureCols);
+  const hasHighchartsSeries = Array.isArray(config.series);
+
+  if (hasCustomFormat || !hasHighchartsSeries) {
+    return config;
+  }
+
+  const clone = { ...config };
+
+  const xAxis = Array.isArray(clone.xAxis) ? clone.xAxis[0] : clone.xAxis;
+  const primarySeries = clone.series.filter((serie: any) => serie && Array.isArray(serie.data));
+
+  if (primarySeries.length === 0) {
+    return config;
+  }
+
+  // 1. 获取图表类型
+  const resolvedChartType =
+    clone.chart?.type ||
+    primarySeries[0].type ||
+    (primarySeries.length === 1 && primarySeries[0].data?.length <= 5 ? "pie" : "line");
+
+  // 2. 维度字段与分类
+  const dimKey = "category";
+  let categories: any[] = [];
+
+  if (Array.isArray(xAxis?.categories) && xAxis.categories.length > 0) {
+    categories = xAxis.categories;
+  } else {
+    const nameSet = new Set<string | number>();
+    primarySeries.forEach((serie: any) => {
+      serie.data.forEach((point: any, index: number) => {
+        if (Array.isArray(point) && point.length >= 1) {
+          nameSet.add(point[0]);
+        } else if (typeof point === "object" && point !== null) {
+          if (point.name !== undefined) {
+            nameSet.add(point.name);
+          } else if (point.category !== undefined) {
+            nameSet.add(point.category);
+          } else if (point.x !== undefined) {
+            nameSet.add(point.x);
+          } else {
+            nameSet.add(index);
+          }
+        } else {
+          nameSet.add(index);
+        }
+      });
+    });
+    categories = Array.from(nameSet);
+  }
+
+  if (categories.length === 0) {
+    categories = primarySeries[0].data.map((_item: any, index: number) => index);
+  }
+
+  // 3. 指标列配置
+  const measureCols: string[] = [];
+  const columnList: any[] = [
+    {
+      guid: dimKey,
+      col: dimKey,
+      name: xAxis?.title?.text || "类别",
+      dataType: "STRING",
+    },
+  ];
+
+  primarySeries.forEach((serie: any, seriesIndex: number) => {
+    const guid = `measure_${seriesIndex}`;
+    measureCols.push(guid);
+    columnList.push({
+      guid,
+      col: guid,
+      name: serie.name || `指标${seriesIndex + 1}`,
+      dataType: "NUMBER",
+    });
+  });
+
+  // 4. 数据行构建
+  const dataList = categories.map((category, index) => {
+    const row: Record<string, any> = {
+      [dimKey]: category,
+    };
+    primarySeries.forEach((serie: any, seriesIndex: number) => {
+      const guid = measureCols[seriesIndex];
+      const point = serie.data[index];
+
+      let value: number | null = null;
+
+      if (Array.isArray(point)) {
+        value = point[1] ?? null;
+      } else if (typeof point === "object" && point !== null) {
+        if (typeof point.y === "number") {
+          value = point.y;
+        } else if (typeof point.value === "number") {
+          value = point.value;
+        } else if (typeof point[guid] === "number") {
+          value = point[guid];
+        } else if (typeof point[dimKey] === "number") {
+          value = point[dimKey];
+        } else if (typeof point.x === "number" && typeof point.y === "number") {
+          value = point.y;
+        }
+      } else if (typeof point === "number") {
+        value = point;
+      }
+
+      row[guid] = value;
+    });
+    return row;
+  });
+
+  return {
+    ...clone,
+    chartSuggest: resolvedChartType === "bar" || resolvedChartType === "column" ? "bar" : resolvedChartType,
+    dimCols: [dimKey],
+    measureCols,
+    dataList,
+    columnList,
+  };
+};
+
 /**
  * 图形切换Bar
  * @param props
@@ -179,13 +308,16 @@ const DataChat: GenieType.FC<{
   data?: Record<string, any>;
 }> = (props) => {
   const { data } = props;
-  const chartCfg: Record<string, any> = typeof data === "object" ? data : {};
+  const rawConfig: Record<string, any> = typeof data === "object" ? data : {};
+
+  const chartCfg = useMemo(() => normalizeHighchartsConfig(rawConfig), [rawConfig]);
+
   const [currentType, setCurrentType] = useState<string>(ChatsUtils.checkChartType(chartCfg));
 
   const transConfig = useMemo(() => {
-    chartCfg.chartSuggest = currentType;
-    return ChatsUtils.transConfig(chartCfg);
-  }, [currentType]);
+    const cfg = { ...chartCfg, chartSuggest: currentType };
+    return ChatsUtils.transConfig(cfg);
+  }, [chartCfg, currentType]);
 
   return (
     <div className="w-full flex flex-col items-center max-w-[1200px] mt-[24px] bg-[#fff] p-[15px] rounded-[12px]">
