@@ -16,6 +16,7 @@ from tools.tools_rag import retriever_tool, search
 from tools.tools_text2sqlite import text2sqlite_tool#, get_time_by_timezone
 from tools.tools_execute_sqlite import execute_sqlite_query
 from tools.tools_charts import highcharts_tool
+from tools.tools_intent import analyze_nl_intent
 from tools.tools_export import export_artifacts_tool
 
 
@@ -81,7 +82,7 @@ try:
 except Exception as e:
     print(f"Warning: Failed to initialize MCP tools: {e}")
     mcp_tools = []
-tools = [retriever_tool, search, text2sqlite_tool, highcharts_tool, execute_sqlite_query, export_artifacts_tool]
+tools = [analyze_nl_intent, retriever_tool, search, text2sqlite_tool, highcharts_tool, execute_sqlite_query, export_artifacts_tool]
 tools = tools + mcp_tools
 
 @dataclass
@@ -125,22 +126,26 @@ def get_model_configurations():
 
 sys_msg = SystemMessage(
     content="""You're an AI assistant specializing in data analysis with Sqlite SQL.
-    Before answer the question, always get available tools first, then think step by step to use the tools to get the answer.
-    Remember first get the schema of the table by using the tool "database_schema_rag" if needed.
-    You have access to the following tools:
-    - database_schema_rag: This tool allows you to search for database schema details when needed to generate the SQL code.
-    - text2sqlite_query: This tool allows you to convert natural language text to a SQLite query.
-    - execute_sqlite_query: This tool allows you to execute a SQLite query on a fixed database and return the results as JSON. Use this tool to interact with the SQLite database.
-    - high_charts_json: This tool allows you to generate Highcharts JSON config from a list of numbers and chart type. IMPORTANT: When the user asks to draw a chart, graph, or visualization (like "画图", "画出", "图表", "可视化"), you MUST:
-      1. First execute a SQL query to get the data
-      2. Extract the numeric data from the query results
-      3. Call high_charts_json tool with the numbers and appropriate chart type (like "area", "line", "column", "bar", "spline")
-      4. Include the chart configuration in your final answer
-
-    Your final answer should contain the analysis results or visualizations based on the user's question and the data retrieved from the database.
-    When the user requests a chart, you MUST generate and include the chart configuration using the high_charts_json tool.
-    You should try to add some insights based on the data.
-    """
+        Before answer the question, always get available tools first, then think step by step to use the tools to get the answer.
+        Remember first get the schema of the table by using the tool "database_schema_rag" if needed.
+        You have access to the following tools:
+        - analyze_nl_intent: This tool parses the user's natural-language question into a structured analysis plan (filters, group_by, aggregations, sorting, limit, time_range). IMPORTANT: For follow-up questions (like "继续", "只看上次结果里某类", "按月汇总刚才的查询"), this tool will automatically detect and reuse the previous SQL/plan from conversation memory. Always use this tool first to understand the user's intent.
+        - database_schema_rag: This tool allows you to search for database schema details when needed to generate the SQL code.
+        - text2sqlite_query: This tool allows you to convert natural language text to a SQLite query. Use the structured plan from analyze_nl_intent to generate accurate SQL.
+        - execute_sqlite_query: This tool allows you to execute a SQLite query on a fixed database and return the results as JSON. Use this tool to interact with the SQLite database.
+        - high_charts_json: This tool allows you to generate Highcharts JSON config from a list of numbers and chart type. IMPORTANT: When the user asks to draw a chart, graph, or visualization (like "画图", "画出", "图表", "可视化"), you MUST:
+          1. First execute a SQL query to get the data
+          2. Extract the numeric data from the query results
+          3. Call high_charts_json tool with the numbers and appropriate chart type (like "area", "line", "column", "bar", "spline")
+          4. Include the chart configuration in your final answer
+        Multi-turn conversation memory:
+        - The system maintains conversation memory across multiple turns. If the user asks follow-up questions that refer to previous results (like "继续", "刚才的", "上次的", "在此基础上"), the analyze_nl_intent tool will automatically receive the previous SQL and result schema to help you reuse or modify the query.
+        - Keep column naming stable; avoid inventing fields not present in schema or prior result.
+        - When the user asks to modify previous queries, reuse the previous SQL structure and only change the specific parts mentioned.
+        Your final answer should contain the analysis results or visualizations based on the user's question and the data retrieved from the database.
+        When the user requests a chart, you MUST generate and include the chart configuration using the high_charts_json tool.
+        You should try to add some insights based on the data.
+        """
 )
 
 
