@@ -17,6 +17,11 @@ import classNames from "classnames";
 import Logo from "../Logo";
 import { Modal } from "antd";
 
+const STORAGE_KEY_PREFIX = "chat_view_history";
+
+const buildHistoryKey = (type: "general" | "data") =>
+  `${STORAGE_KEY_PREFIX}:${type}`;
+
 type Props = {
   inputInfo: CHAT.TInputInfo;
   product?: CHAT.Product;
@@ -38,6 +43,8 @@ const ChatView: GenieType.FC<Props> = (props) => {
   const actionViewRef = ActionView.useActionView();
   const sessionId = useMemo(() => getSessionId(), []);
   const [modal, contextHolder] = Modal.useModal();
+  const generalHistoryLoadedRef = useRef(false);
+  const dataHistoryLoadedRef = useRef(false);
 
   const combineCurrentChat = (
     inputInfo: CHAT.TInputInfo,
@@ -173,6 +180,103 @@ const ChatView: GenieType.FC<Props> = (props) => {
     );
   });
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !sessionId) {
+      return;
+    }
+    const historyKey = buildHistoryKey("general");
+    try {
+      const raw = window.localStorage.getItem(historyKey);
+      if (raw) {
+        const legacy = JSON.parse(raw);
+        if (legacy?.chatList && Array.isArray(legacy.chatList)) {
+          chatList.current = legacy.chatList;
+          setChatListState(legacy.chatList);
+        }
+        if (legacy?.chatTitle) {
+          setChatTitle(legacy.chatTitle);
+        }
+        if (legacy?.sessionId) {
+          // 如果存在历史的 sessionId，则复用它，便于继续对话
+          chatList.current = legacy.chatList || [];
+        }
+      }
+    } catch (error) {
+      console.error("[ERROR] Failed to load general chat history:", error);
+    } finally {
+      generalHistoryLoadedRef.current = true;
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !sessionId) {
+      return;
+    }
+    const historyKey = buildHistoryKey("data");
+    try {
+      const raw = window.localStorage.getItem(historyKey);
+      if (raw) {
+        const legacy = JSON.parse(raw);
+        if (legacy?.dataChatList && Array.isArray(legacy.dataChatList)) {
+          setDataChatList(legacy.dataChatList);
+        }
+        if (legacy?.chatTitle) {
+          setChatTitle(legacy.chatTitle);
+        }
+      }
+    } catch (error) {
+      console.error("[ERROR] Failed to load data chat history:", error);
+    } finally {
+      dataHistoryLoadedRef.current = true;
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!generalHistoryLoadedRef.current || typeof window === "undefined" || !sessionId) {
+      return;
+    }
+    const historyKey = buildHistoryKey("general");
+    if (chatListState.length === 0) {
+      window.localStorage.removeItem(historyKey);
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        historyKey,
+        JSON.stringify({
+          chatList: chatListState,
+          chatTitle,
+          sessionId,
+        })
+      );
+    } catch (error) {
+      console.error("[ERROR] Failed to persist general chat history:", error);
+    }
+  }, [chatListState, chatTitle, sessionId]);
+
+  useEffect(() => {
+    if (!dataHistoryLoadedRef.current || typeof window === "undefined" || !sessionId) {
+      return;
+    }
+    const historyKey = buildHistoryKey("data");
+    if (dataChatList.length === 0) {
+      window.localStorage.removeItem(historyKey);
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        historyKey,
+        JSON.stringify({
+          dataChatList,
+          chatTitle,
+          sessionId,
+        })
+      );
+    } catch (error) {
+      console.error("[ERROR] Failed to persist data chat history:", error);
+    }
+  }, [dataChatList, chatTitle, sessionId]);
+
   const temporaryChangeTask = (taskList: MESSAGE.Task[]) => {
     const task = taskList[taskList.length - 1] as CHAT.Task;
     if (!["task_summary", "result"].includes(task?.messageType)) {
@@ -213,18 +317,29 @@ const ChatView: GenieType.FC<Props> = (props) => {
       request_id: requestId,
       model: "qwen-plus",
     };
-    const currentChat = {
+    let currentChat = {
       query: inputInfo.message,
       loading: true,
       think: "",
       chartData: undefined,
       error: "",
+      response: "",
+      requestId,
     };
-    setDataChatList([...dataChatList, currentChat]);
+    setDataChatList((prev) => [...prev, { ...currentChat }]);
     scrollToTop(chatRef.current!);
 
     setChatTitle(inputInfo.message);
     setLoading(true);
+
+    const mergeChatUpdate = (patch: Partial<typeof currentChat>) => {
+      currentChat = { ...currentChat, ...patch };
+      setDataChatList((prev) =>
+        prev.map((chat) =>
+          chat.requestId === requestId ? { ...chat, ...currentChat } : chat
+        )
+      );
+    };
 
     const handleMessage = (data: any) => {
       try {
@@ -236,42 +351,94 @@ const ChatView: GenieType.FC<Props> = (props) => {
         
         if (type === "error") {
           console.log("[DEBUG] Error message in sendDataMessage:", message);
-          currentChat.error = message || "处理请求时出错";
-          currentChat.loading = false;
+          mergeChatUpdate({
+            error: message || "处理请求时出错",
+            loading: false,
+          });
           setLoading(false);
         } else if (type === "start") {
           console.log("[DEBUG] Start message in sendDataMessage:", message);
-          currentChat.think = message || "正在处理...";
+          mergeChatUpdate({
+            think: message || "正在处理...",
+            loading: true,
+            error: "",
+          });
         } else if (type === "response") {
           console.log("[DEBUG] Response message in sendDataMessage:", { message, finished });
           // 尝试解析消息中的图表数据
           try {
-            // 检查是否包含 JSON 代码块（Highcharts 配置）
-            const jsonMatch = message.match(/```json\n([\s\S]*?)\n```/);
-            if (jsonMatch) {
-              currentChat.chartData = JSON.parse(jsonMatch[1]);
+            // 提取 JSON 的辅助方法（尽量健壮）
+            const extractChartJsonFromText = (text: string): any | null => {
+              if (!text) return null;
+              const candidates: string[] = [];
+              // 1) 捕获所有代码块 ```...```
+              const fenceRegex = /```(?:json|JSON)?\s*([\s\S]*?)\s*```/g;
+              let fenceMatch;
+              while ((fenceMatch = fenceRegex.exec(text)) !== null) {
+                if (fenceMatch[1]) candidates.push(fenceMatch[1]);
+              }
+              // 2) 捕获疑似 JSON 对象（通过简单的括号平衡提取多段）
+              //    仅当未在代码块中捕获到时再做
+              if (candidates.length === 0) {
+                const chars = Array.from(text);
+                let depth = 0;
+                let start = -1;
+                for (let i = 0; i < chars.length; i++) {
+                  if (chars[i] === "{") {
+                    if (depth === 0) start = i;
+                    depth++;
+                  } else if (chars[i] === "}") {
+                    if (depth > 0) depth--;
+                    if (depth === 0 && start !== -1) {
+                      const snippet = text.substring(start, i + 1);
+                      // 过滤太短的片段
+                      if (snippet.length > 2) candidates.push(snippet);
+                      start = -1;
+                    }
+                  }
+                }
+              }
+              // 3) 遍历候选，选择包含关键字段的对象
+              const importantKeys = ["series", "dimCols", "measureCols", "dataList", "option", "chartSuggest", "xAxis"];
+              for (const c of candidates) {
+                try {
+                  const obj = JSON.parse(c);
+                  const keys = Object.keys(obj || {});
+                  const hit = importantKeys.some((k) => k in obj);
+                  if (hit) return obj;
+                  // 兜底：如果有 chart_config 嵌套
+                  if (obj && typeof obj === "object" && obj.chart_config) {
+                    return obj.chart_config;
+                  }
+                } catch {
+                  // 忽略解析失败
+                }
+              }
+              return null;
+            };
+            const parsed = extractChartJsonFromText(message);
+            if (parsed) {
+              mergeChatUpdate({
+                chartData: parsed,
+              });
             }
-            currentChat.response = message;
+            mergeChatUpdate({
+              response: message,
+            });
           } catch (e) {
-            currentChat.response = message;
+            mergeChatUpdate({
+              response: message,
+            });
           }
           if (finished) {
             console.log("[DEBUG] Message finished in sendDataMessage");
-            currentChat.loading = false;
+            mergeChatUpdate({
+              loading: false,
+            });
             setLoading(false);
           }
         }
-        const newChatList = [...dataChatList];
-        // 修复：应该更新最后一个元素，而不是在末尾插入
-        if (newChatList.length > 0) {
-          newChatList[newChatList.length - 1] = currentChat;
-        } else {
-          newChatList.push(currentChat);
-        }
-        setDataChatList(newChatList);
         console.log("[DEBUG] Updated dataChatList, response:", currentChat.response);
-        console.log("[DEBUG] dataChatList length:", newChatList.length);
-        console.log("[DEBUG] Last chat in list:", newChatList[newChatList.length - 1]);
         // 滚动到顶部
         scrollToTop(chatRef.current!);
       } catch (error) {

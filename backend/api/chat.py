@@ -75,7 +75,7 @@ async def stream_agent_response(query: str, session_id: str, request_id: str, mo
         # 配置
         config = {
             "configurable": {"thread_id": session_id},
-            "recursion_limit": 50
+            "recursion_limit": 100  # 增加递归限制，避免复杂任务时过早停止
         }
         
         # 发送初始消息
@@ -94,15 +94,21 @@ async def stream_agent_response(query: str, session_id: str, request_id: str, mo
         def run_agent():
             try:
                 print(f"[DEBUG] Starting agent execution for query: {query[:50]}...")
-                result = react_graph.invoke(state, config=config, debug=False)
+                print(f"[DEBUG] Config: {config}")
+                # 使用 invoke 方法，递归限制已在 config 中设置
+                result = react_graph.invoke(state, config=config)
                 print(f"[DEBUG] Agent execution completed. Final message length: {len(callback_handler.final_message)}")
                 print(f"[DEBUG] Final message preview: {callback_handler.final_message[:100]}...")
                 return result
             except Exception as e:
-                print(f"[ERROR] Agent execution failed: {str(e)}")
+                error_msg = str(e)
+                print(f"[ERROR] Agent execution failed: {error_msg}")
                 import traceback
                 traceback.print_exc()
-                token_queue.put(("error", str(e)))
+                # 如果是递归限制错误，提供更友好的错误信息
+                if "recursion_limit" in error_msg.lower():
+                    error_msg = f"任务执行步骤过多（超过{config.get('recursion_limit', 100)}步）。这可能是因为任务过于复杂或陷入了循环。请尝试简化您的问题或重新表述。"
+                token_queue.put(("error", error_msg))
                 return None
         
         # 启动 Agent 执行
