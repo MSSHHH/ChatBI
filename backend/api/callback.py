@@ -2,11 +2,45 @@
 流式输出回调处理器
 用于 SSE 流式输出
 """
-from typing import List, Optional, Callable
-from langchain_core.callbacks.base import BaseCallbackHandler
-from langchain_core.messages import BaseMessage
+from typing import Any, Callable, List, Optional
 import queue
 import threading
+
+from langchain_core.callbacks.base import BaseCallbackHandler
+from langchain_core.messages import BaseMessage
+
+
+def _extract_text(token: Any) -> str:
+    """
+    自適應解析不同類型的 token，回傳文字內容。
+    """
+    if token is None:
+        return ""
+    if isinstance(token, str):
+        return token
+
+    # LangChain 0.3 ChatOpenAI 會傳遞 AIMessageChunk / ChatGenerationChunk
+    if hasattr(token, "content"):
+        content = token.content
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text_parts.append(item.get("text") or "")
+                else:
+                    text_parts.append(str(item))
+            return "".join(text_parts)
+
+    # OpenAI Delta 結構
+    if hasattr(token, "delta"):
+        delta = token.delta
+        if isinstance(delta, dict):
+            return delta.get("content", "")
+
+    # 其他情況 fallback
+    return str(token)
 
 
 class StreamingCallbackHandler(BaseCallbackHandler):
@@ -22,16 +56,20 @@ class StreamingCallbackHandler(BaseCallbackHandler):
     
     def on_llm_new_token(self, token: str, **kwargs) -> None:
         """处理新的 token"""
+        extracted = _extract_text(token)
+        if not extracted:
+            return
+
         if not self.has_streaming_started:
             self.has_streaming_started = True
         
-        self.token_buffer.append(token)
+        self.token_buffer.append(extracted)
         self.final_message = "".join(self.token_buffer)
         
         # 如果有回调函数，实时发送 token
         if self.token_callback:
             try:
-                self.token_callback(token)
+                self.token_callback(extracted)
             except Exception as e:
                 print(f"Error in token callback: {e}")
     

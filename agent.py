@@ -16,6 +16,8 @@ from tools.tools_rag import retriever_tool, search
 from tools.tools_text2sqlite import text2sqlite_tool#, get_time_by_timezone
 from tools.tools_execute_sqlite import execute_sqlite_query
 from tools.tools_charts import highcharts_tool
+from tools.tools_export import export_artifacts_tool
+
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import asyncio
@@ -79,8 +81,7 @@ try:
 except Exception as e:
     print(f"Warning: Failed to initialize MCP tools: {e}")
     mcp_tools = []
-
-tools = [retriever_tool, search, text2sqlite_tool, highcharts_tool, execute_sqlite_query]
+tools = [retriever_tool, search, text2sqlite_tool, highcharts_tool, execute_sqlite_query, export_artifacts_tool]
 tools = tools + mcp_tools
 
 @dataclass
