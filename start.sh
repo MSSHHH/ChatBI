@@ -5,20 +5,20 @@
 
 echo "🚀 启动 ChatBI..."
 
-# 初始化 conda（如果需要）
-CONDA_BASE=$(conda info --base 2>/dev/null)
-if [ -n "$CONDA_BASE" ] && [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
-    source "$CONDA_BASE/etc/profile.d/conda.sh"
-fi
+# # 初始化 conda（如果需要）
+# CONDA_BASE=$(conda info --base 2>/dev/null)
+# if [ -n "$CONDA_BASE" ] && [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
+#     source "$CONDA_BASE/etc/profile.d/conda.sh"
+# fi
 
-# 激活 conda 环境
-if command -v conda &> /dev/null; then
-    conda activate nlp 2>/dev/null || {
-        echo "⚠️  无法激活 nlp 环境"
-        echo "💡 请先运行: conda activate nlp"
-        echo "💡 或使用: source <conda_base>/etc/profile.d/conda.sh && conda activate nlp"
-    }
-fi
+# # 激活 conda 环境
+# if command -v conda &> /dev/null; then
+#     conda activate nlp 2>/dev/null || {
+#         echo "⚠️  无法激活 nlp 环境"
+#         echo "💡 请先运行: conda activate nlp"
+#         echo "💡 或使用: source <conda_base>/etc/profile.d/conda.sh && conda activate nlp"
+#     }
+# fi
 
 # 检查环境变量
 if [ -z "$OPENAI_API_KEY" ]; then

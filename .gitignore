@@ -53,8 +53,9 @@ graph_*.png
 # *.sqlite3
 
 # 向量数据库（可选，根据需要取消注释）
-chroma_db/
 chroma_langchain_db/
+chroma_langchain_db/chroma.sqlite3
+chroma_langchain_db/401e6c37-9e6d-49e1-8395-1c7f18d00973
 
 # 其他
 pplx.py
